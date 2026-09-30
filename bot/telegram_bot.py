@@ -10,13 +10,20 @@ def _load_auth_instance():
 
 
 def _load_engsel_helpers():
-    from app.client.engsel import get_family, get_package, get_package_details, get_balance, get_profile, get_tiering_info
+    from app.client.engsel import (
+        get_balance,
+        get_family,
+        get_package,
+        get_package_details,
+        get_profile,
+        get_tiering_info,
+    )
 
     return {
+        "get_balance": get_balance,
         "get_family": get_family,
         "get_package": get_package,
         "get_package_details": get_package_details,
-        "get_balance": get_balance,
         "get_profile": get_profile,
         "get_tiering_info": get_tiering_info,
     }
@@ -39,6 +46,12 @@ class TelegramAPIClient:
     def get_active_user() -> dict[str, Any] | None:
         auth = _load_auth_instance()
         return auth.get_active_user() if hasattr(auth, "get_active_user") else None
+
+    @staticmethod
+    def get_saved_accounts() -> list[int]:
+        auth = _load_auth_instance()
+        auth.load_tokens()
+        return [int(item["number"]) for item in getattr(auth, "refresh_tokens", [])]
 
     @staticmethod
     def get_status() -> dict[str, Any]:
@@ -66,8 +79,7 @@ class TelegramAPIClient:
             }
 
             if user.get("subscription_type") == "PREPAID":
-                tiering = helpers["get_tiering_info"](auth.api_key, user["tokens"])
-                result["tiering"] = tiering
+                result["tiering"] = helpers["get_tiering_info"](auth.api_key, user["tokens"])
 
             return result
         except Exception as exc:
@@ -83,19 +95,11 @@ class TelegramAPIClient:
             return {"ok": False, "message": "Tidak ada user aktif."}
 
         auth = _load_auth_instance()
-        get_balance_fn = _load_engsel_helpers()["get_balance"]
-
         try:
-            balance = get_balance_fn(auth.api_key, user["tokens"]["id_token"])
+            balance = _load_engsel_helpers()["get_balance"](auth.api_key, user["tokens"]["id_token"])
             return {"ok": True, "data": balance}
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
-
-    @staticmethod
-    def get_saved_accounts() -> list[int]:
-        auth = _load_auth_instance()
-        auth.load_tokens()
-        return [int(item["number"]) for item in getattr(auth, "refresh_tokens", [])]
 
     @staticmethod
     def request_login(phone_number: str) -> dict[str, Any]:
@@ -137,7 +141,6 @@ class TelegramAPIClient:
 
             auth.add_refresh_token(int(cleaned_phone), tokens["refresh_token"])
             auth.set_active_user(int(cleaned_phone))
-
             return {
                 "ok": True,
                 "message": "Login berhasil. Akun sudah tersimpan dan aktif.",
@@ -170,7 +173,7 @@ class TelegramAPIClient:
 
         family_data = family_result["data"]
         variants = family_data.get("package_variants", [])
-        flattened = []
+        flattened: list[dict[str, Any]] = []
 
         for variant in variants:
             variant_name = variant.get("name", "Unnamed")
@@ -209,29 +212,25 @@ class TelegramAPIClient:
             option = details.get("package_option", {})
             family = details.get("package_family", {})
             variant = details.get("package_detail_variant", {})
-            
-            item_name = f"{family.get('name', '')} - {variant.get('name', '')} - {option.get('name', '')}".strip()
-            
-            benefits = []
+
+            benefits: list[str] = []
             for benefit in option.get("benefits", []):
                 name = benefit.get("name", "Unknown")
                 data_type = benefit.get("data_type", "")
                 total = benefit.get("total", 0)
-                
                 if data_type == "DATA" and total > 0:
-                    quota_gb = total / (1024 ** 3)
-                    benefits.append(f"{name}: {quota_gb:.2f}GB")
+                    benefits.append(f"{name}: {total / (1024 ** 3):.2f} GB")
                 elif data_type == "VOICE" and total > 0:
-                    benefits.append(f"{name}: {total/60:.2f} menit")
+                    benefits.append(f"{name}: {total / 60:.2f} menit")
                 elif data_type == "TEXT" and total > 0:
                     benefits.append(f"{name}: {total} SMS")
                 else:
                     benefits.append(f"{name}: {total} {data_type}")
-            
+
             return {
                 "ok": True,
                 "data": {
-                    "package_name": item_name,
+                    "package_name": f"{family.get('name', '')} - {variant.get('name', '')} - {option.get('name', '')}".strip(),
                     "price": option.get("price", 0),
                     "validity": option.get("validity", "N/A"),
                     "payment_for": family.get("payment_for", "BUY_PACKAGE"),
@@ -267,7 +266,7 @@ class TelegramAPIClient:
             option = details.get("package_option", {})
             family = details.get("package_family", {})
             variant = details.get("package_detail_variant", {})
-            
+
             from app.type_dict import PaymentItem
 
             payment_item = PaymentItem(
@@ -295,10 +294,9 @@ class TelegramAPIClient:
                     "message": "Pembelian berhasil! Silakan cek aplikasi MyXL untuk detail.",
                     "data": result,
                 }
-            else:
-                error_msg = result.get("message", "Pembelian gagal") if isinstance(result, dict) else str(result)
-                return {"ok": False, "message": f"Pembelian gagal: {error_msg}"}
 
+            error_msg = result.get("message", "Pembelian gagal") if isinstance(result, dict) else str(result)
+            return {"ok": False, "message": f"Pembelian gagal: {error_msg}"}
         except Exception as exc:
             return {"ok": False, "message": f"Gagal melakukan pembelian: {exc}"}
 

@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import logging
-import json
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 from bot.api_client import TelegramAPIClient
 from bot.config import TELEGRAM_BOT_TOKEN
@@ -14,52 +21,63 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+async def _send_or_edit(update: Update, text: str, reply_markup=None) -> None:
+    query = getattr(update, "callback_query", None)
+    if query is not None:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+        return
+    await update.message.reply_text(text, reply_markup=reply_markup)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chat_id = update.effective_chat.id
-    session = session_manager.get_or_create(chat_id)
+    session = session_manager.get_or_create(update.effective_chat.id)
     session.state = "idle"
 
     keyboard = [
-        [InlineKeyboardButton("Status Akun", callback_data="status"), InlineKeyboardButton("Saldo", callback_data="balance")],
-        [InlineKeyboardButton("Login", callback_data="login"), InlineKeyboardButton("Akun Tersimpan", callback_data="accounts")],
+        [InlineKeyboardButton("Status", callback_data="status"), InlineKeyboardButton("Saldo", callback_data="balance")],
+        [InlineKeyboardButton("Login", callback_data="login"), InlineKeyboardButton("Akun", callback_data="accounts")],
         [InlineKeyboardButton("Bantuan", callback_data="help")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = (
-        "Halo! 👋 Saya adalah bot Telegram untuk MYnyak CLI.\n\n"
-        "Pilih menu di bawah atau gunakan perintah:\n"
-        "/status - Cek status akun\n"
-        "/balance - Cek saldo\n"
-        "/packages FAMILY_CODE - Lihat paket\n"
-        "/buy FAMILY_CODE VARIANT_CODE ORDER - Beli paket\n"
+        "Halo! Saya adalah bot Telegram untuk MYnyak CLI.\n\n"
+        "Pilih menu di bawah atau gunakan command berikut:\n"
+        "/status - status akun\n"
+        "/balance - cek saldo\n"
+        "/packages FAMILY_CODE - lihat paket\n"
+        "/buy FAMILY_CODE VARIANT_CODE ORDER - ringkasan paket\n"
     )
-    await update.message.reply_text(text, reply_markup=reply_markup)
+    await start_or_reply(update, text, reply_markup)
+
+
+async def start_or_reply(update: Update, text: str, reply_markup=None) -> None:
+    query = getattr(update, "callback_query", None)
+    if query is not None:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
-        "Perintah yang tersedia:\n\n"
-        "/start - Menu utama\n"
-        "/status - Status pengguna aktif\n"
-        "/balance - Saldo saat ini\n"
-        "/login - Login akun baru via OTP\n"
-        "/accounts - Daftar akun yang tersimpan\n"
-        "/packages FAMILY_CODE - Tampilkan daftar paket\n"
-        "/buy FAMILY_CODE VARIANT_CODE ORDER - Ringkasan & beli paket\n"
-        "/cancel - Batalkan proses login\n"
-        "/help - Bantuan ini\n\n"
-        "Contoh:\n"
-        "/packages UNLIMITED_TURBO\n"
-        "/buy UNLIMITED_TURBO VARIANT001 1"
+        "Panduan bot:\n\n"
+        "/start - menu utama\n"
+        "/status - status akun aktif\n"
+        "/balance - saldo akun\n"
+        "/login - login via OTP\n"
+        "/accounts - daftar akun tersimpan\n"
+        "/packages FAMILY_CODE - list paket\n"
+        "/buy FAMILY_CODE VARIANT_CODE ORDER - ringkasan & pembelian\n"
+        "/cancel - batalkan sesi login\n"
+        "/help - bantuan\n"
     )
-    await update.message.reply_text(text)
+    await _send_or_edit(update, text)
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-
     if query.data == "status":
         await status_command(update, context)
     elif query.data == "balance":
@@ -75,192 +93,144 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     accounts = TelegramAPIClient.get_saved_accounts()
     if not accounts:
-        text = "❌ Belum ada akun yang tersimpan di CLI."
+        text = "Belum ada akun yang tersimpan di CLI."
     else:
-        text = "✅ Akun tersimpan:\n" + "\n".join(f"📱 {account}" for account in accounts)
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text)
-    else:
-        await update.message.reply_text(text)
+        text = "Akun tersimpan:\n" + "\n".join(f"• {account}" for account in accounts)
+    await _send_or_edit(update, text)
 
 
 async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session = session_manager.get_or_create(update.effective_chat.id)
     session.state = "waiting_phone"
     session.data = {}
-    
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            "📞 Silakan kirim nomor HP untuk login.\nFormat: 6281234567890"
-        )
-    else:
-        await update.message.reply_text(
-            "📞 Silakan kirim nomor HP untuk login.\nFormat: 6281234567890"
-        )
+    text = "Silakan kirim nomor HP untuk login.\nFormat: 6281234567890"
+    await _send_or_edit(update, text)
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session = session_manager.get_or_create(update.effective_chat.id)
     session.state = "idle"
     session.data = {}
-    await update.message.reply_text("❌ Proses login dibatalkan.")
+    await _send_or_edit(update, "Proses login dibatalkan.")
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     status = TelegramAPIClient.get_status()
     if not status.get("ok"):
-        text = f"❌ {status.get('message', 'Status tidak tersedia.')}"
+        text = f"Status tidak tersedia: {status.get('message', 'Unknown')}"
     else:
         profile = status.get("profile", {})
         text = (
-            "✅ Status akun aktif:\n"
-            f"📱 Nomor: {status.get('number')}\n"
-            f"🆔 Subscriber ID: {status.get('subscriber_id')}\n"
-            f"📋 Tipe: {status.get('subscription_type')}\n"
-            f"💰 Saldo: {status.get('balance')}\n"
+            "Status akun aktif:\n"
+            f"Nomor: {status.get('number')}\n"
+            f"Subscriber ID: {status.get('subscriber_id')}\n"
+            f"Tipe langganan: {status.get('subscription_type')}\n"
+            f"Saldo: {status.get('balance')}\n"
         )
+        if profile and profile.get("profile", {}).get("name"):
+            text += f"Nama profil: {profile['profile']['name']}"
 
-        if profile:
-            profile_name = profile.get("profile", {}).get("name")
-            if profile_name:
-                text += f"👤 Nama: {profile_name}"
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text)
-    else:
-        await update.message.reply_text(text)
+    await _send_or_edit(update, text)
 
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     balance = TelegramAPIClient.get_balance()
     if not balance.get("ok"):
-        text = f"❌ {balance.get('message', 'Saldo tidak tersedia.')}"
+        text = f"Saldo tidak tersedia: {balance.get('message', 'Unknown')}"
     else:
         payload = balance.get("data")
         if isinstance(payload, dict):
-            items = [f"• {key}: {value}" for key, value in payload.items()]
-            text = "💰 Saldo saat ini:\n" + "\n".join(items)
+            text = "Saldo saat ini:\n" + "\n".join(f"{key}: {value}" for key, value in payload.items())
         else:
-            text = f"💰 Saldo saat ini:\n{payload}"
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(text)
-    else:
-        await update.message.reply_text(text)
+            text = f"Saldo saat ini:\n{payload}"
+    await _send_or_edit(update, text)
 
 
 async def packages_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if not args:
-        await update.message.reply_text("Format: /packages FAMILY_CODE\nContoh: /packages UNLIMITED_TURBO")
+        await _send_or_edit(update, "Format: /packages FAMILY_CODE\nContoh: /packages MYFAMILY")
         return
 
     family_code = args[0].strip()
     result = TelegramAPIClient.get_package_options(family_code)
     if not result.get("ok"):
-        await update.message.reply_text(f"❌ {result.get('message', 'Tidak dapat mengambil data family.')}")
+        await _send_or_edit(update, f"Gagal: {result.get('message', 'Tidak dapat mengambil data family.')}")
         return
 
     family = result["data"]["family"]
     options = result["data"]["options"]
     if not options:
-        await update.message.reply_text(f"❌ Family {family_code} tidak memiliki opsi paket.")
+        await _send_or_edit(update, f"Family {family_code} tidak memiliki opsi paket yang tersedia.")
         return
 
-    lines = [
-        f"📦 Family: {family.get('name', family_code)}",
-        f"Code: {family_code}",
-        "\n🎯 Opsi paket:",
-    ]
-    for idx, option in enumerate(options[:10], start=1):
+    lines = [f"Family: {family.get('name', family_code)}", "Paket tersedia:"]
+    for index, option in enumerate(options[:10], start=1):
         lines.append(
-            f"\n{idx}. {option['variant_name']}\n"
-            f"   {option['option_name']}\n"
-            f"   💵 Rp {option['price']:,}\n"
-            f"   `/buy {family_code} {option['variant_code']} {option['order']}`"
+            f"{index}. {option['variant_name']} | {option['option_name']} | Rp {option['price']:,} | order={option['order']}"
         )
-
     if len(options) > 10:
-        lines.append(f"\n... dan {len(options)-10} opsi lain")
-
-    await update.message.reply_text("\n".join(lines))
+        lines.append(f"... dan {len(options)-10} opsi lainnya")
+    await _send_or_edit(update, "\n".join(lines))
 
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     args = context.args
     if len(args) < 3:
-        await update.message.reply_text(
-            "Format: /buy FAMILY_CODE VARIANT_CODE ORDER\nContoh: /buy UNLIMITED_TURBO VARIANT001 1"
-        )
+        await _send_or_edit(update, "Format: /buy FAMILY_CODE VARIANT_CODE ORDER\nContoh: /buy MYFAMILY VAR001 1")
         return
 
     family_code = args[0].strip()
     variant_code = args[1].strip()
-    option_order = args[2].strip()
-
     try:
-        order_int = int(option_order)
+        option_order = int(args[2].strip())
     except ValueError:
-        await update.message.reply_text("❌ ORDER harus berupa angka bulat.")
+        await _send_or_edit(update, "ORDER harus berupa angka bulat.")
         return
 
-    result = TelegramAPIClient.get_offer_summary(family_code, variant_code, order_int)
+    result = TelegramAPIClient.get_offer_summary(family_code, variant_code, option_order)
     if not result.get("ok"):
-        await update.message.reply_text(f"❌ {result.get('message', 'Gagal membuat ringkasan paket.')}")
+        await _send_or_edit(update, f"Gagal: {result.get('message', 'Tidak dapat menghasilkan ringkasan paket.')}")
         return
 
     offer = result["data"]
-    benefits_text = "\n".join([f"• {b}" for b in offer.get("benefits", [])]) if offer.get("benefits") else "N/A"
-    
-    message = (
-        "📋 Ringkasan Paket\n"
-        "="*40 + "\n"
-        f"📦 Nama: {offer['package_name']}\n"
-        f"💵 Harga: Rp {offer['price']:,}\n"
-        f"⏱️ Masa Aktif: {offer['validity']}\n"
-        f"⭐ Poin: {offer['points']}\n"
-        f"📋 Tipe Plan: {offer['plan_type']}\n\n"
-        f"Manfaat:\n{benefits_text}\n\n"
+    benefits = "\n".join(f"• {item}" for item in offer.get("benefits", [])) or "Tidak ada detail benefit"
+    text = (
+        "Ringkasan paket:\n"
+        f"Nama: {offer['package_name']}\n"
+        f"Harga: Rp {offer['price']:,}\n"
+        f"Masa aktif: {offer['validity']}\n"
+        f"Plan type: {offer['plan_type']}\n"
+        f"Payment For: {offer['payment_for']}\n\n"
+        f"Benefit:\n{benefits}\n\n"
+        "Pilih tombol di bawah untuk membeli dengan saldo."
     )
 
-    keyboard = [
-        [InlineKeyboardButton("✅ Beli Sekarang (Pulsa)", callback_data=f"confirm_buy|{family_code}|{variant_code}|{order_int}")],
-        [InlineKeyboardButton("❌ Batal", callback_data="cancel_buy")],
-    ]
+    keyboard = [[InlineKeyboardButton("✅ Beli dengan Pulsa", callback_data=f"confirm_buy|{family_code}|{variant_code}|{option_order}")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(message, reply_markup=reply_markup)
+    await _send_or_edit(update, text, reply_markup)
 
 
 async def confirm_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    data_parts = query.data.split("|")
-    
-    if len(data_parts) < 4:
-        await query.answer("❌ Data tidak valid", show_alert=True)
+    await query.answer("Memproses pembelian...")
+    data = query.data or ""
+    if not data.startswith("confirm_buy|"):
+        await query.edit_message_text("Pembelian dibatalkan.")
         return
 
-    family_code = data_parts[1]
-    variant_code = data_parts[2]
-    order_int = int(data_parts[3])
-
-    await query.answer("⏳ Memproses pembelian...")
-    await query.edit_message_text("⏳ Sedang memproses pembelian, silakan tunggu...")
+    _, family_code, variant_code, order_raw = data.split("|", 3)
+    try:
+        order_int = int(order_raw)
+    except ValueError:
+        await query.edit_message_text("Order tidak valid.")
+        return
 
     result = TelegramAPIClient.purchase_with_balance(family_code, variant_code, order_int)
     if result.get("ok"):
-        await query.edit_message_text(
-            f"✅ {result.get('message', 'Pembelian berhasil!')}\n\n"
-            "Silakan cek aplikasi MyXL untuk melihat detail lengkap."
-        )
+        await query.edit_message_text(f"Pembelian berhasil.\n{result.get('message', 'Sukses')}")
     else:
-        await query.edit_message_text(f"❌ {result.get('message', 'Pembelian gagal.')}")
-
-
-async def cancel_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("❌ Pembelian dibatalkan.")
+        await query.edit_message_text(f"Pembelian gagal.\n{result.get('message', 'Unknown error')}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -275,9 +245,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         phone = update.message.text.strip()
         result = TelegramAPIClient.request_login(phone)
         if not result.get("ok"):
-            await update.message.reply_text(f"❌ {result.get('message', 'Gagal memulai login.')}")
             session.state = "idle"
             session.data = {}
+            await update.message.reply_text(f"{result.get('message', 'Gagal memulai login.')}")
             return
 
         session.state = "waiting_otp"
@@ -289,24 +259,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         otp = update.message.text.strip()
         result = TelegramAPIClient.verify_login(session.data.get("phone_number", ""), otp)
         if not result.get("ok"):
-            await update.message.reply_text(f"❌ {result.get('message', 'OTP gagal diverifikasi.')}")
+            await update.message.reply_text(result.get("message", "OTP gagal diverifikasi."))
             return
 
         session.state = "idle"
         session.data = {}
-        await update.message.reply_text(f"✅ {result.get('message', 'Login berhasil.')}")
+        await update.message.reply_text(result.get("message", "Login berhasil."))
         return
 
-    await update.message.reply_text(
-        "❓ Perintah tidak dikenali. Ketik /help untuk melihat daftar perintah."
-    )
+    await update.message.reply_text("Perintah tidak dikenali. Ketik /help untuk melihat daftar perintah yang tersedia.")
 
 
 def build_application() -> Application:
     if not TELEGRAM_BOT_TOKEN:
-        raise RuntimeError(
-            "TELEGRAM_BOT_TOKEN belum diatur. Isi variabel environment atau file .env terlebih dahulu."
-        )
+        raise RuntimeError("TELEGRAM_BOT_TOKEN belum diatur. Isi variabel environment atau file .env terlebih dahulu.")
 
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -320,14 +286,13 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("cancel", cancel_command))
     application.add_handler(CallbackQueryHandler(button_callback, pattern="^(status|balance|login|accounts|help)$"))
     application.add_handler(CallbackQueryHandler(confirm_buy_callback, pattern="^confirm_buy"))
-    application.add_handler(CallbackQueryHandler(cancel_buy_callback, pattern="^cancel_buy"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return application
 
 
 def main() -> None:
     application = build_application()
-    logger.info("🚀 Bot Telegram is starting...")
+    logger.info("Bot Telegram sedang berjalan...")
     application.run_polling(allowed_updates=None)
 
 
