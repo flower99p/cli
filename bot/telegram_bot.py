@@ -28,6 +28,12 @@ def _load_ciam_helpers():
     return get_otp, submit_otp
 
 
+def _load_purchase_helpers():
+    from app.client.purchase.balance import settlement_balance
+
+    return settlement_balance
+
+
 class TelegramAPIClient:
     @staticmethod
     def get_active_user() -> dict[str, Any] | None:
@@ -202,7 +208,26 @@ class TelegramAPIClient:
 
             option = details.get("package_option", {})
             family = details.get("package_family", {})
-            item_name = f"{family.get('name', '')} - {details.get('package_detail_variant', {}).get('name', '')} - {option.get('name', '')}".strip()
+            variant = details.get("package_detail_variant", {})
+            
+            item_name = f"{family.get('name', '')} - {variant.get('name', '')} - {option.get('name', '')}".strip()
+            
+            benefits = []
+            for benefit in option.get("benefits", []):
+                name = benefit.get("name", "Unknown")
+                data_type = benefit.get("data_type", "")
+                total = benefit.get("total", 0)
+                
+                if data_type == "DATA" and total > 0:
+                    quota_gb = total / (1024 ** 3)
+                    benefits.append(f"{name}: {quota_gb:.2f}GB")
+                elif data_type == "VOICE" and total > 0:
+                    benefits.append(f"{name}: {total/60:.2f} menit")
+                elif data_type == "TEXT" and total > 0:
+                    benefits.append(f"{name}: {total} SMS")
+                else:
+                    benefits.append(f"{name}: {total} {data_type}")
+            
             return {
                 "ok": True,
                 "data": {
@@ -212,10 +237,70 @@ class TelegramAPIClient:
                     "payment_for": family.get("payment_for", "BUY_PACKAGE"),
                     "family_code": family.get("package_family_code", family_code),
                     "option_code": option.get("package_option_code", ""),
+                    "token_confirmation": details.get("token_confirmation", ""),
+                    "benefits": benefits,
+                    "points": option.get("point", 0),
+                    "plan_type": family.get("plan_type", "N/A"),
                 },
             }
         except Exception as exc:
             return {"ok": False, "message": f"Gagal mengambil detail paket: {exc}"}
+
+    @staticmethod
+    def purchase_with_balance(family_code: str, variant_code: str, option_order: int) -> dict[str, Any]:
+        auth = _load_auth_instance()
+        user = auth.get_active_user()
+        if user is None:
+            return {"ok": False, "message": "Belum ada pengguna aktif."}
+
+        try:
+            details = _load_engsel_helpers()["get_package_details"](
+                auth.api_key,
+                user["tokens"],
+                family_code,
+                variant_code,
+                int(option_order),
+            )
+            if not details:
+                return {"ok": False, "message": "Gagal mengambil detail paket."}
+
+            option = details.get("package_option", {})
+            family = details.get("package_family", {})
+            variant = details.get("package_detail_variant", {})
+            
+            from app.type_dict import PaymentItem
+
+            payment_item = PaymentItem(
+                item_code=option.get("package_option_code", ""),
+                product_type="",
+                item_price=option.get("price", 0),
+                item_name=f"{variant.get('name', '')} {option.get('name', '')}".strip(),
+                tax=0,
+                token_confirmation=details.get("token_confirmation", ""),
+            )
+
+            settlement_fn = _load_purchase_helpers()
+            result = settlement_fn(
+                auth.api_key,
+                user["tokens"],
+                [payment_item],
+                family.get("payment_for", "BUY_PACKAGE"),
+                ask_overwrite=False,
+                overwrite_amount=option.get("price", 0),
+            )
+
+            if result and result.get("status") == "SUCCESS":
+                return {
+                    "ok": True,
+                    "message": "Pembelian berhasil! Silakan cek aplikasi MyXL untuk detail.",
+                    "data": result,
+                }
+            else:
+                error_msg = result.get("message", "Pembelian gagal") if isinstance(result, dict) else str(result)
+                return {"ok": False, "message": f"Pembelian gagal: {error_msg}"}
+
+        except Exception as exc:
+            return {"ok": False, "message": f"Gagal melakukan pembelian: {exc}"}
 
 
 __all__ = ["TelegramAPIClient"]
