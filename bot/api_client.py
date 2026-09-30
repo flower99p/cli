@@ -11,6 +11,7 @@ def _load_auth_instance():
 
 def _load_engsel_helpers():
     from app.client.engsel import (
+        get_active_packages,
         get_balance,
         get_family,
         get_package_details,
@@ -19,6 +20,7 @@ def _load_engsel_helpers():
     )
 
     return {
+        "get_active_packages": get_active_packages,
         "get_balance": get_balance,
         "get_family": get_family,
         "get_package_details": get_package_details,
@@ -98,6 +100,21 @@ class TelegramAPIClient:
             return {"ok": True, "data": balance}
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
+    @staticmethod
+    def get_active_packages() -> dict[str, Any]:
+        user = TelegramAPIClient.get_active_user()
+        if user is None:
+            return {"ok": False, "message": "Belum ada pengguna aktif."}
+
+        auth = _load_auth_instance()
+        try:
+            packages = _load_engsel_helpers()["get_active_packages"](auth.api_key, user["tokens"])
+            if not packages:
+                return {"ok": True, "data": []}
+            return {"ok": True, "data": packages}
+        except Exception as exc:
+            return {"ok": False, "message": f"Gagal mengambil paket aktif: {exc}"}
 
     @staticmethod
     def request_login(phone_number: str) -> dict[str, Any]:

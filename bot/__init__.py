@@ -13,6 +13,7 @@ from telegram.ext import (
     filters,
 )
 
+from bot.bookmark import bookmark_manager
 from bot.config import TELEGRAM_BOT_TOKEN
 from bot.user_session import session_manager
 
@@ -39,19 +40,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     session.state = "idle"
 
     keyboard = [
-        [InlineKeyboardButton("Status", callback_data="status"), InlineKeyboardButton("Saldo", callback_data="balance")],
-        [InlineKeyboardButton("Login", callback_data="login"), InlineKeyboardButton("Akun", callback_data="accounts")],
-        [InlineKeyboardButton("Bantuan", callback_data="help")],
+        [InlineKeyboardButton("📊 Status", callback_data="status"), InlineKeyboardButton("💰 Saldo", callback_data="balance")],
+        [InlineKeyboardButton("🔐 Login", callback_data="login"), InlineKeyboardButton("📱 Akun", callback_data="accounts")],
+        [InlineKeyboardButton("📦 Paket", callback_data="packages_menu"), InlineKeyboardButton("⭐ Bookmark", callback_data="bookmarks_menu")],
+        [InlineKeyboardButton("ℹ️ Bantuan", callback_data="help")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     text = (
-        "Halo! Saya adalah bot Telegram untuk MYnyak CLI.\n\n"
-        "Pilih menu di bawah atau gunakan command berikut:\n"
+        "👋 Halo! Saya adalah bot Telegram untuk MYnyak CLI.\n\n"
+        "📋 Pilih menu di bawah atau gunakan command berikut:\n"
         "/status - status akun\n"
         "/balance - cek saldo\n"
         "/packages FAMILY_CODE - lihat paket\n"
         "/buy FAMILY_CODE VARIANT_CODE ORDER - ringkasan paket\n"
+        "/bookmarks - lihat paket bookmark\n"
+        "/my_packages - lihat paket saya\n"
     )
     await start_or_reply(update, text, reply_markup)
 
@@ -66,7 +70,7 @@ async def start_or_reply(update: Update, text: str, reply_markup=None) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text = (
-        "Panduan bot:\n\n"
+        "📖 Panduan bot:\n\n"
         "/start - menu utama\n"
         "/status - status akun aktif\n"
         "/balance - saldo akun\n"
@@ -74,8 +78,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/accounts - daftar akun tersimpan\n"
         "/packages FAMILY_CODE - list paket\n"
         "/buy FAMILY_CODE VARIANT_CODE ORDER - ringkasan & pembelian\n"
+        "/my_packages - lihat paket aktif saya\n"
+        "/bookmarks - lihat bookmark paket\n"
         "/cancel - batalkan sesi login\n"
-        "/help - bantuan\n"
+        "/help - bantuan ini\n\n"
+        "💡 Contoh penggunaan:\n"
+        "/packages UNLIMITED_TURBO\n"
+        "/buy UNLIMITED_TURBO VARIANT001 1"
     )
     await _send_or_edit(update, text)
 
@@ -94,15 +103,49 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await accounts_command(update, context)
     elif query.data == "help":
         await help_command(update, context)
+    elif query.data == "packages_menu":
+        await packages_menu(update, context)
+    elif query.data == "bookmarks_menu":
+        await bookmarks_menu(update, context)
+
+
+async def packages_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    text = (
+        "📦 Menu Paket:\n\n"
+        "Gunakan format:\n"
+        "/packages FAMILY_CODE\n\n"
+        "Contoh:\n"
+        "/packages UNLIMITED_TURBO\n"
+        "/packages FREEDOM_MAX\n\n"
+        "Untuk detail lebih lanjut, ketik /help"
+    )
+    await _send_or_edit(update, text)
+
+
+async def bookmarks_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    bookmarks = bookmark_manager.get_bookmarks(chat_id)
+
+    if not bookmarks:
+        text = "⭐ Anda belum memiliki paket yang dibookmark.\n\nGunakan /packages untuk mencari paket dan bookmark favorit Anda."
+    else:
+        lines = [f"⭐ Paket Bookmark Anda ({len(bookmarks)}):"]
+        for idx, bm in enumerate(bookmarks, 1):
+            lines.append(f"\n{idx}. {bm['package_name']}")
+            lines.append(f"   💰 Rp {bm['price']:,}")
+            lines.append(f"   🏷️ {bm['family_code']} | {bm['variant_code']} | order={bm['option_order']}")
+        text = "\n".join(lines)
+
+    await _send_or_edit(update, text)
 
 
 async def accounts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     TelegramAPIClient = get_api_client()
     accounts = TelegramAPIClient.get_saved_accounts()
     if not accounts:
-        text = "Belum ada akun yang tersimpan di CLI."
+        text = "📱 Belum ada akun yang tersimpan di CLI."
     else:
-        text = "Akun tersimpan:\n" + "\n".join(f"• {account}" for account in accounts)
+        text = "📱 Akun tersimpan:\n" + "\n".join(f"\n• {account}" for account in accounts)
     await _send_or_edit(update, text)
 
 
@@ -110,7 +153,7 @@ async def login_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     session = session_manager.get_or_create(update.effective_chat.id)
     session.state = "waiting_phone"
     session.data = {}
-    text = "Silakan kirim nomor HP untuk login.\nFormat: 6281234567890"
+    text = "🔐 Silakan kirim nomor HP untuk login.\nFormat: 6281234567890"
     await _send_or_edit(update, text)
 
 
@@ -118,25 +161,25 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     session = session_manager.get_or_create(update.effective_chat.id)
     session.state = "idle"
     session.data = {}
-    await _send_or_edit(update, "Proses login dibatalkan.")
+    await _send_or_edit(update, "❌ Proses login dibatalkan.")
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     TelegramAPIClient = get_api_client()
     status = TelegramAPIClient.get_status()
     if not status.get("ok"):
-        text = f"Status tidak tersedia: {status.get('message', 'Unknown')}"
+        text = f"❌ Status tidak tersedia: {status.get('message', 'Unknown')}"
     else:
         profile = status.get("profile", {})
         text = (
-            "Status akun aktif:\n"
-            f"Nomor: {status.get('number')}\n"
-            f"Subscriber ID: {status.get('subscriber_id')}\n"
-            f"Tipe langganan: {status.get('subscription_type')}\n"
-            f"Saldo: {status.get('balance')}\n"
+            "📊 Status akun aktif:\n"
+            f"📱 Nomor: {status.get('number')}\n"
+            f"🆔 Subscriber ID: {status.get('subscriber_id')}\n"
+            f"📋 Tipe langganan: {status.get('subscription_type')}\n"
+            f"💰 Saldo: {status.get('balance')}\n"
         )
         if profile and profile.get("profile", {}).get("name"):
-            text += f"Nama profil: {profile['profile']['name']}"
+            text += f"👤 Nama profil: {profile['profile']['name']}"
 
     await _send_or_edit(update, text)
 
@@ -145,13 +188,34 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     TelegramAPIClient = get_api_client()
     balance = TelegramAPIClient.get_balance()
     if not balance.get("ok"):
-        text = f"Saldo tidak tersedia: {balance.get('message', 'Unknown')}"
+        text = f"❌ Saldo tidak tersedia: {balance.get('message', 'Unknown')}"
     else:
         payload = balance.get("data")
         if isinstance(payload, dict):
-            text = "Saldo saat ini:\n" + "\n".join(f"{key}: {value}" for key, value in payload.items())
+            text = "💰 Saldo saat ini:\n" + "\n".join(f"{key}: {value}" for key, value in payload.items())
         else:
-            text = f"Saldo saat ini:\n{payload}"
+            text = f"💰 Saldo saat ini:\n{payload}"
+    await _send_or_edit(update, text)
+
+
+async def my_packages_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    TelegramAPIClient = get_api_client()
+    result = TelegramAPIClient.get_active_packages()
+    if not result.get("ok"):
+        text = f"❌ {result.get('message', 'Tidak dapat mengambil data paket.')}"
+    else:
+        packages = result.get("data", [])
+        if not packages:
+            text = "📦 Anda tidak memiliki paket aktif saat ini."
+        else:
+            lines = [f"📦 Paket Aktif Anda ({len(packages)}):"]
+            for idx, pkg in enumerate(packages, 1):
+                lines.append(
+                    f"\n{idx}. {pkg.get('name', 'N/A')}\n"
+                    f"   ⏱️ Kadaluarsa: {pkg.get('expiry_date', 'N/A')}\n"
+                    f"   📝 Status: {pkg.get('status', 'N/A')}"
+                )
+            text = "\n".join(lines)
     await _send_or_edit(update, text)
 
 
@@ -165,23 +229,23 @@ async def packages_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     family_code = args[0].strip()
     result = TelegramAPIClient.get_package_options(family_code)
     if not result.get("ok"):
-        await _send_or_edit(update, f"Gagal: {result.get('message', 'Tidak dapat mengambil data family.')}")
+        await _send_or_edit(update, f"❌ Gagal: {result.get('message', 'Tidak dapat mengambil data family.')}")
         return
 
     family = result["data"]["family"]
     options = result["data"]["options"]
     if not options:
-        await _send_or_edit(update, f"Family {family_code} tidak memiliki opsi paket yang tersedia.")
+        await _send_or_edit(update, f"❌ Family {family_code} tidak memiliki opsi paket yang tersedia.")
         return
 
-    lines = [f"Family: {family.get('name', family_code)}", "Paket tersedia:"]
+    lines = [f"📦 Family: {family.get('name', family_code)}", "\n📋 Paket tersedia:"]
     for index, option in enumerate(options[:10], start=1):
         lines.append(
-            f"{index}. {option['variant_name']} | {option['option_name']} | Rp {option['price']:,} | order={option['order']}"
+            f"\n{index}. {option['variant_name']} | {option['option_name']} | Rp {option['price']:,} | order={option['order']}"
         )
     if len(options) > 10:
-        lines.append(f"... dan {len(options)-10} opsi lainnya")
-    await _send_or_edit(update, "\n".join(lines))
+        lines.append(f"\n... dan {len(options)-10} opsi lainnya")
+    await _send_or_edit(update, "".join(lines))
 
 
 async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -201,25 +265,59 @@ async def buy_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     result = TelegramAPIClient.get_offer_summary(family_code, variant_code, option_order)
     if not result.get("ok"):
-        await _send_or_edit(update, f"Gagal: {result.get('message', 'Tidak dapat menghasilkan ringkasan paket.')}")
+        await _send_or_edit(update, f"❌ Gagal: {result.get('message', 'Tidak dapat menghasilkan ringkasan paket.')}")
         return
 
     offer = result["data"]
-    benefits = "\n".join(f"• {item}" for item in offer.get("benefits", [])) or "Tidak ada detail benefit"
+    benefits = "\n".join(f"✓ {item}" for item in offer.get("benefits", [])) or "Tidak ada detail benefit"
     text = (
-        "Ringkasan paket:\n"
-        f"Nama: {offer['package_name']}\n"
-        f"Harga: Rp {offer['price']:,}\n"
-        f"Masa aktif: {offer['validity']}\n"
-        f"Plan type: {offer['plan_type']}\n"
-        f"Payment For: {offer['payment_for']}\n\n"
-        f"Benefit:\n{benefits}\n\n"
-        "Pilih tombol di bawah untuk membeli dengan saldo."
+        "📋 Ringkasan paket:\n"
+        f"📦 Nama: {offer['package_name']}\n"
+        f"💰 Harga: Rp {offer['price']:,}\n"
+        f"⏱️ Masa aktif: {offer['validity']}\n"
+        f"📝 Plan type: {offer['plan_type']}\n"
+        f"🏷️ Payment For: {offer['payment_for']}\n\n"
+        f"✨ Benefit:\n{benefits}\n\n"
+        "Pilih tombol di bawah untuk melanjutkan."
     )
 
-    keyboard = [[InlineKeyboardButton("✅ Beli dengan Pulsa", callback_data=f"confirm_buy|{family_code}|{variant_code}|{option_order}")]]
+    keyboard = [
+        [InlineKeyboardButton("✅ Beli dengan Pulsa", callback_data=f"confirm_buy|{family_code}|{variant_code}|{option_order}")],
+        [InlineKeyboardButton("⭐ Bookmark", callback_data=f"bookmark|{family_code}|{variant_code}|{option_order}")],
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await _send_or_edit(update, text, reply_markup)
+
+
+async def bookmark_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    TelegramAPIClient = get_api_client()
+    query = update.callback_query
+    await query.answer()
+    data = query.data or ""
+    if not data.startswith("bookmark|"):
+        await query.edit_message_text("❌ Bookmark dibatalkan.")
+        return
+
+    _, family_code, variant_code, order_raw = data.split("|", 3)
+    try:
+        order_int = int(order_raw)
+    except ValueError:
+        await query.edit_message_text("Order tidak valid.")
+        return
+
+    result = TelegramAPIClient.get_offer_summary(family_code, variant_code, order_int)
+    if not result.get("ok"):
+        await query.edit_message_text(f"❌ Gagal bookmark: {result.get('message', 'Unknown error')}")
+        return
+
+    offer = result["data"]
+    chat_id = query.message.chat_id
+    success = bookmark_manager.add_bookmark(chat_id, family_code, variant_code, order_int, offer["package_name"], offer["price"])
+
+    if success:
+        await query.edit_message_text(f"✅ Paket '{offer['package_name']}' berhasil dibookmark!")
+    else:
+        await query.edit_message_text(f"⚠️ Paket ini sudah ada di bookmark Anda.")
 
 
 async def confirm_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -228,7 +326,7 @@ async def confirm_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.answer("Memproses pembelian...")
     data = query.data or ""
     if not data.startswith("confirm_buy|"):
-        await query.edit_message_text("Pembelian dibatalkan.")
+        await query.edit_message_text("❌ Pembelian dibatalkan.")
         return
 
     _, family_code, variant_code, order_raw = data.split("|", 3)
@@ -240,9 +338,9 @@ async def confirm_buy_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     result = TelegramAPIClient.purchase_with_balance(family_code, variant_code, order_int)
     if result.get("ok"):
-        await query.edit_message_text(f"Pembelian berhasil.\n{result.get('message', 'Sukses')}")
+        await query.edit_message_text(f"✅ Pembelian berhasil!\n{result.get('message', 'Sukses')}")
     else:
-        await query.edit_message_text(f"Pembelian gagal.\n{result.get('message', 'Unknown error')}")
+        await query.edit_message_text(f"❌ Pembelian gagal.\n{result.get('message', 'Unknown error')}")
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -260,27 +358,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not result.get("ok"):
             session.state = "idle"
             session.data = {}
-            await update.message.reply_text(f"{result.get('message', 'Gagal memulai login.')}")
+            await update.message.reply_text(f"❌ {result.get('message', 'Gagal memulai login.')}")
             return
 
         session.state = "waiting_otp"
         session.data = {"phone_number": result["phone_number"]}
-        await update.message.reply_text(result["message"])
+        await update.message.reply_text(f"📬 {result['message']}")
         return
 
     if session.state == "waiting_otp":
         otp = update.message.text.strip()
         result = TelegramAPIClient.verify_login(session.data.get("phone_number", ""), otp)
         if not result.get("ok"):
-            await update.message.reply_text(result.get("message", "OTP gagal diverifikasi."))
+            await update.message.reply_text(f"❌ {result.get('message', 'OTP gagal diverifikasi.')}")
             return
 
         session.state = "idle"
         session.data = {}
-        await update.message.reply_text(result.get("message", "Login berhasil."))
+        await update.message.reply_text(f"✅ {result.get('message', 'Login berhasil.')}")
         return
 
-    await update.message.reply_text("Perintah tidak dikenali. Ketik /help untuk melihat daftar perintah yang tersedia.")
+    await update.message.reply_text("❓ Perintah tidak dikenali. Ketik /help untuk melihat daftar perintah yang tersedia.")
 
 
 def build_application() -> Application:
@@ -296,16 +394,19 @@ def build_application() -> Application:
     application.add_handler(CommandHandler("accounts", accounts_command))
     application.add_handler(CommandHandler("packages", packages_command))
     application.add_handler(CommandHandler("buy", buy_command))
+    application.add_handler(CommandHandler("my_packages", my_packages_command))
+    application.add_handler(CommandHandler("bookmarks", bookmarks_menu))
     application.add_handler(CommandHandler("cancel", cancel_command))
-    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(status|balance|login|accounts|help)$"))
+    application.add_handler(CallbackQueryHandler(button_callback, pattern="^(status|balance|login|accounts|help|packages_menu|bookmarks_menu)$"))
     application.add_handler(CallbackQueryHandler(confirm_buy_callback, pattern="^confirm_buy"))
+    application.add_handler(CallbackQueryHandler(bookmark_callback, pattern="^bookmark"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     return application
 
 
 def main() -> None:
     application = build_application()
-    logger.info("Bot Telegram sedang berjalan...")
+    logger.info("🚀 Bot Telegram sedang berjalan...")
     application.run_polling(allowed_updates=None)
 
 
