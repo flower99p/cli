@@ -10,9 +10,16 @@ def _load_auth_instance():
 
 
 def _load_engsel_helpers():
-    from app.client.engsel import get_balance, get_profile, get_tiering_info
+    from app.client.engsel import get_family, get_package, get_package_details, get_balance, get_profile, get_tiering_info
 
-    return get_balance, get_profile, get_tiering_info
+    return {
+        "get_family": get_family,
+        "get_package": get_package,
+        "get_package_details": get_package_details,
+        "get_balance": get_balance,
+        "get_profile": get_profile,
+        "get_tiering_info": get_tiering_info,
+    }
 
 
 def _load_ciam_helpers():
@@ -37,11 +44,11 @@ class TelegramAPIClient:
                 "message": "Belum ada pengguna aktif di CLI. Jalankan proses login di aplikasi CLI terlebih dahulu.",
             }
 
-        get_balance_fn, get_profile_fn, get_tiering_info_fn = _load_engsel_helpers()
+        helpers = _load_engsel_helpers()
 
         try:
-            balance = get_balance_fn(auth.api_key, user["tokens"]["id_token"])
-            profile = get_profile_fn(auth.api_key, user["tokens"]["access_token"], user["tokens"]["id_token"])
+            balance = helpers["get_balance"](auth.api_key, user["tokens"]["id_token"])
+            profile = helpers["get_profile"](auth.api_key, user["tokens"]["access_token"], user["tokens"]["id_token"])
 
             result = {
                 "ok": True,
@@ -53,7 +60,7 @@ class TelegramAPIClient:
             }
 
             if user.get("subscription_type") == "PREPAID":
-                tiering = get_tiering_info_fn(auth.api_key, user["tokens"])
+                tiering = helpers["get_tiering_info"](auth.api_key, user["tokens"])
                 result["tiering"] = tiering
 
             return result
@@ -70,7 +77,7 @@ class TelegramAPIClient:
             return {"ok": False, "message": "Tidak ada user aktif."}
 
         auth = _load_auth_instance()
-        get_balance_fn = _load_engsel_helpers()[0]
+        get_balance_fn = _load_engsel_helpers()["get_balance"]
 
         try:
             balance = get_balance_fn(auth.api_key, user["tokens"]["id_token"])
@@ -133,6 +140,82 @@ class TelegramAPIClient:
             }
         except Exception as exc:
             return {"ok": False, "message": f"Gagal memverifikasi OTP: {exc}"}
+
+    @staticmethod
+    def get_package_family(family_code: str) -> dict[str, Any]:
+        auth = _load_auth_instance()
+        user = auth.get_active_user()
+        if user is None:
+            return {"ok": False, "message": "Belum ada pengguna aktif."}
+
+        try:
+            family_data = _load_engsel_helpers()["get_family"](auth.api_key, user["tokens"], family_code)
+            if not family_data:
+                return {"ok": False, "message": f"Tidak bisa mengambil data family {family_code}."}
+            return {"ok": True, "data": family_data}
+        except Exception as exc:
+            return {"ok": False, "message": f"Gagal mengambil data family: {exc}"}
+
+    @staticmethod
+    def get_package_options(family_code: str) -> dict[str, Any]:
+        family_result = TelegramAPIClient.get_package_family(family_code)
+        if not family_result.get("ok"):
+            return family_result
+
+        family_data = family_result["data"]
+        variants = family_data.get("package_variants", [])
+        flattened = []
+
+        for variant in variants:
+            variant_name = variant.get("name", "Unnamed")
+            for option in variant.get("package_options", []):
+                flattened.append(
+                    {
+                        "variant_name": variant_name,
+                        "variant_code": variant.get("package_variant_code", ""),
+                        "option_name": option.get("name", ""),
+                        "option_code": option.get("package_option_code", ""),
+                        "price": option.get("price", 0),
+                        "order": option.get("order", 0),
+                    }
+                )
+
+        return {"ok": True, "data": {"family": family_data.get("package_family", {}), "options": flattened}}
+
+    @staticmethod
+    def get_offer_summary(family_code: str, variant_code: str, option_order: int) -> dict[str, Any]:
+        auth = _load_auth_instance()
+        user = auth.get_active_user()
+        if user is None:
+            return {"ok": False, "message": "Belum ada pengguna aktif."}
+
+        try:
+            details = _load_engsel_helpers()["get_package_details"](
+                auth.api_key,
+                user["tokens"],
+                family_code,
+                variant_code,
+                int(option_order),
+            )
+            if not details:
+                return {"ok": False, "message": "Gagal membentuk ringkasan paket."}
+
+            option = details.get("package_option", {})
+            family = details.get("package_family", {})
+            item_name = f"{family.get('name', '')} - {details.get('package_detail_variant', {}).get('name', '')} - {option.get('name', '')}".strip()
+            return {
+                "ok": True,
+                "data": {
+                    "package_name": item_name,
+                    "price": option.get("price", 0),
+                    "validity": option.get("validity", "N/A"),
+                    "payment_for": family.get("payment_for", "BUY_PACKAGE"),
+                    "family_code": family.get("package_family_code", family_code),
+                    "option_code": option.get("package_option_code", ""),
+                },
+            }
+        except Exception as exc:
+            return {"ok": False, "message": f"Gagal mengambil detail paket: {exc}"}
 
 
 __all__ = ["TelegramAPIClient"]
