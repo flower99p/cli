@@ -4,10 +4,55 @@
 
 CLI client for a certain Indonesian mobile internet service provider.
 
-# How to get environtment Variables
+# How to get environment variables
 Go to [OUR TELEGRAM CHANNEL](https://t.me/alyxcli)
-Copy the provided environment variables and paste it into a text file named `.env` in the same directory as `main.py`.
-You can use nano or any text editor to create the file.
+Copy the provided environment variables and paste them into a text file named `.env` in the same directory as `main.py`.
+You can use `nano` or any text editor to create the file.
+
+# How to run on Linux / OpenWrt
+
+## 1. Install dependencies
+
+### Debian / Ubuntu / Linux
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-pip python3-venv git
+```
+
+### OpenWrt
+```bash
+opkg update
+opkg install python3 python3-pip python3-pil git
+```
+
+### Termux / Android
+```bash
+pkg update && pkg upgrade -y
+pkg install git python python-pillow -y
+```
+
+## 2. Clone and enter the project
+```bash
+git clone https://github.com/flower99p/cli
+cd cli
+```
+
+## 3. Install Python requirements
+```bash
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
+```
+
+## 4. Create `.env` file
+```bash
+cp .env.template .env
+```
+Then fill in the values from the provided Telegram channel.
+
+## 5. Run the script
+```bash
+python3 main.py
+```
 
 # How to run with TERMUX
 1. Update & Upgrade Termux
